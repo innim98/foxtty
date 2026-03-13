@@ -1,0 +1,15 @@
+{
+  "name": "foxtrot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Web terminal with Korean input buffer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  }
+}

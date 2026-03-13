@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-family: monospace;
+      overflow: hidden;
+      position: fixed;
+      width: 100%;
+    }
+    #terminal-container {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      bottom: 88px;
+      padding: 4px;
+    }
+    #bottom-bar {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      background: #2d2d2d;
+      border-top: 1px solid #444;
+    }
+    #quick-keys {
+      display: flex;
+      align-items: center;
+      height: 38px;
+      gap: 4px;
+      padding: 0 4px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      border-bottom: 1px solid #333;
+    }
+    #quick-keys::-webkit-scrollbar { display: none; }
+    #extra-keys {
+      display: none;
+      max-height: 140px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 4px;
+      border-bottom: 1px solid #333;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    #extra-keys.open { display: flex; }
+    #input-row {
+      display: flex;
+      align-items: center;
+      height: 50px;
+      gap: 6px;
+      padding: 0 6px;
+    }
+    #input-field {
+      flex: 1;
+      height: 38px;
+      padding: 0 10px;
+      font-size: 16px;
+      font-family: monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border: 1px solid #555;
+      border-radius: 4px;
+      outline: none;
+    }
+    #input-field:focus { border-color: #007acc; }
+    .btn {
+      height: 32px;
+      min-width: 32px;
+      padding: 0 10px;
+      font-size: 13px;
+      font-family: monospace;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      background: #444;
+      color: #d4d4d4;
+      flex-shrink: 0;
+    }
+    .btn:active { opacity: 0.7; }
+    .btn-primary { background: #007acc; color: #fff; }
+    .btn-toggle { background: #555; }
+    .btn-toggle.active { background: #007acc; color: #fff; }
+    .key-btn {
+      height: 30px;
+      min-width: 36px;
+      padding: 0 8px;
+      font-size: 12px;
+      font-family: monospace;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      background: #3a3a3a;
+      color: #d4d4d4;
+      flex-shrink: 0;
+    }
+    .key-btn:active { opacity: 0.7; }
+    /* Tab dropdown */
+    .tab-dropdown-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+    #tab-btn {
+      background: #007acc;
+      color: #fff;
+      font-weight: bold;
+    }
+    #tab-menu {
+      display: none;
+      position: fixed;
+      min-width: 160px;
+      background: #2d2d2d;
+      border: 1px solid #555;
+      border-radius: 4px;
+      z-index: 1000;
+      overflow: hidden;
+    }
+    #tab-menu.open { display: block; }
+    .tab-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: monospace;
+      color: #d4d4d4;
+      cursor: pointer;
+      border-bottom: 1px solid #333;
+    }
+    .tab-item:last-child { border-bottom: none; }
+    .tab-item:active, .tab-item.active { background: #007acc; color: #fff; }
+    .tab-item .close-x {
+      margin-left: 10px;
+      color: #888;
+      font-weight: bold;
+      padding: 0 4px;
+    }
+    .tab-item .close-x:active { color: #f44; }
+    .tab-new {
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: monospace;
+      color: #007acc;
+      cursor: pointer;
+      text-align: center;
+      border-top: 1px solid #444;
+    }
+    .tab-new:active { background: #333; }
+  </style>
+</head>
+<body>
+  <div id="terminal-container"></div>
+  <div id="bottom-bar">
+    <div id="quick-keys"></div>
+    <div id="extra-keys"></div>
+    <div id="input-row">
+      <input id="input-field" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button id="send-btn" class="btn btn-primary">Send</button>
+      <button id="enter-btn" class="btn">Enter</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script>
+    // --- State ---
+    let currentTabId = null;
+    let tabs = [];
+
+    // --- Terminal setup ---
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal-container'));
+    fitAddon.fit();
+
+    // --- WebSocket ---
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}`);
+
+    ws.onopen = () => {};
+
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (err) { return; }
+
+      if (msg.type === 'output') {
+        term.write(msg.data);
+        term.scrollToBottom();
+      } else if (msg.type === 'scrollback') {
+        term.reset();
+        if (msg.data) term.write(msg.data);
+        term.scrollToBottom();
+        sendResize();
+      } else if (msg.type === 'tab-list') {
+        tabs = msg.tabs;
+        renderTabMenu();
+      } else if (msg.type === 'switched') {
+        currentTabId = msg.id;
+        term.reset();
+        updateTabBtn();
+        sendResize();
+      } else if (msg.type === 'tab-exited') {
+        // update tab list will come separately
+      }
+    };
+
+    ws.onclose = () => term.write('\r\n[Connection closed]\r\n');
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN && currentTabId) {
+        ws.send(JSON.stringify({ type: 'input', data }));
+      }
+    });
+
+    function wsSend(data) {
+      if (ws.readyState === WebSocket.OPEN && currentTabId) {
+        ws.send(JSON.stringify({ type: 'input', data }));
+      }
+    }
+
+    function sendResize() {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    }
+
+    function switchTab(id) {
+      currentTabId = id;
+      ws.send(JSON.stringify({ type: 'switch', id }));
+      updateTabBtn();
+      closeTabMenu();
+    }
+
+    function newTab() {
+      ws.send(JSON.stringify({ type: 'new-tab' }));
+      closeTabMenu();
+    }
+
+    function closeTab(id) {
+      ws.send(JSON.stringify({ type: 'close-tab', id }));
+      if (currentTabId === id) {
+        currentTabId = null;
+        term.reset();
+        // Switch to another tab if available
+        const remaining = tabs.filter(t => t.id !== id);
+        if (remaining.length > 0) {
+          setTimeout(() => switchTab(remaining[0].id), 100);
+        }
+      }
+      closeTabMenu();
+    }
+
+    // --- Auto-connect to first tab ---
+    const origOnMessage = ws.onmessage;
+    ws.onmessage = function(e) {
+      origOnMessage.call(ws, e);
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (err) { return; }
+      if (msg.type === 'tab-list' && !currentTabId && msg.tabs.length > 0) {
+        switchTab(msg.tabs[0].id);
+      }
+    };
+
+    // --- Layout ---
+    const termContainer = document.getElementById('terminal-container');
+    const bottomBar = document.getElementById('bottom-bar');
+
+    function updateLayout() {
+      const vv = window.visualViewport;
+      if (vv) {
+        document.body.style.height = vv.height + 'px';
+        document.body.style.transform = `translateY(${vv.offsetTop}px)`;
+      }
+      termContainer.style.bottom = bottomBar.offsetHeight + 'px';
+      fitAddon.fit();
+      sendResize();
+      term.scrollToBottom();
+    }
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateLayout);
+      window.visualViewport.addEventListener('scroll', updateLayout);
+    }
+    window.addEventListener('resize', updateLayout);
+
+    // --- Input buffer ---
+    const inputField = document.getElementById('input-field');
+
+    function sendText() {
+      const text = inputField.value;
+      if (text) wsSend(text);
+      inputField.value = '';
+      inputField.focus();
+    }
+
+    document.getElementById('send-btn').addEventListener('click', sendText);
+    document.getElementById('enter-btn').addEventListener('click', () => { wsSend('\r'); inputField.focus(); });
+    inputField.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sendText(); }
+    });
+
+    // --- Tab dropdown ---
+    const quickKeysEl = document.getElementById('quick-keys');
+
+    // Tab button + menu
+    const tabWrap = document.createElement('div');
+    tabWrap.className = 'tab-dropdown-wrap';
+
+    const tabBtn = document.createElement('button');
+    tabBtn.id = 'tab-btn';
+    tabBtn.className = 'key-btn';
+    tabBtn.textContent = '#1';
+    tabBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (tabMenu.classList.contains('open')) {
+        closeTabMenu();
+      } else {
+        const rect = tabBtn.getBoundingClientRect();
+        tabMenu.style.left = rect.left + 'px';
+        tabMenu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+        tabMenu.classList.add('open');
+      }
+    });
+
+    const tabMenu = document.createElement('div');
+    tabMenu.id = 'tab-menu';
+    document.body.appendChild(tabMenu);
+
+    tabWrap.appendChild(tabBtn);
+    quickKeysEl.appendChild(tabWrap);
+
+    function updateTabBtn() {
+      tabBtn.textContent = currentTabId ? `#${currentTabId}` : '#-';
+    }
+
+    function renderTabMenu() {
+      tabMenu.innerHTML = '';
+      tabs.forEach((t) => {
+        const item = document.createElement('div');
+        item.className = 'tab-item' + (t.id === currentTabId ? ' active' : '');
+
+        const label = document.createElement('span');
+        label.textContent = `#${t.id}${t.alive ? '' : ' (exited)'}`;
+
+        const closeX = document.createElement('span');
+        closeX.className = 'close-x';
+        closeX.textContent = '\u00d7';
+        closeX.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t.id); });
+
+        item.appendChild(label);
+        item.appendChild(closeX);
+        item.addEventListener('click', () => switchTab(t.id));
+        tabMenu.appendChild(item);
+      });
+
+      const newItem = document.createElement('div');
+      newItem.className = 'tab-new';
+      newItem.textContent = '+ New Tab';
+      newItem.addEventListener('click', newTab);
+      tabMenu.appendChild(newItem);
+    }
+
+    function closeTabMenu() {
+      tabMenu.classList.remove('open');
+    }
+
+    // Close menu when tapping elsewhere
+    document.addEventListener('click', (e) => {
+      if (!tabWrap.contains(e.target) && !tabMenu.contains(e.target)) closeTabMenu();
+    });
+
+    // --- Special keys ---
+    const ESC = '\x1b';
+    const quickKeysDef = [
+      { label: '1', seq: '1' },
+      { label: '2', seq: '2' },
+      { label: '3', seq: '3' },
+      { label: 'ESC', seq: ESC },
+      { label: 'TAB', seq: '\t' },
+      { label: '^C', seq: '\x03' },
+      { label: 'Keys', seq: null, toggle: true },
+    ];
+
+    const extraKeysDef = [
+      { section: 'Arrows' },
+      { label: '\u2191', seq: ESC + '[A' },
+      { label: '\u2193', seq: ESC + '[B' },
+      { label: '\u2190', seq: ESC + '[D' },
+      { label: '\u2192', seq: ESC + '[C' },
+      { section: 'Navigation' },
+      { label: 'Home', seq: ESC + '[H' },
+      { label: 'End', seq: ESC + '[F' },
+      { label: 'PgUp', seq: ESC + '[5~' },
+      { label: 'PgDn', seq: ESC + '[6~' },
+      { label: 'Ins', seq: ESC + '[2~' },
+      { label: 'Del', seq: ESC + '[3~' },
+      { section: 'Function' },
+      { label: 'F1', seq: ESC + 'OP' },
+      { label: 'F2', seq: ESC + 'OQ' },
+      { label: 'F3', seq: ESC + 'OR' },
+      { label: 'F4', seq: ESC + 'OS' },
+      { label: 'F5', seq: ESC + '[15~' },
+      { label: 'F6', seq: ESC + '[17~' },
+      { label: 'F7', seq: ESC + '[18~' },
+      { label: 'F8', seq: ESC + '[19~' },
+      { label: 'F9', seq: ESC + '[20~' },
+      { label: 'F10', seq: ESC + '[21~' },
+      { label: 'F11', seq: ESC + '[23~' },
+      { label: 'F12', seq: ESC + '[24~' },
+      { section: 'Ctrl' },
+      { label: '^A', seq: '\x01' },
+      { label: '^B', seq: '\x02' },
+      { label: '^C', seq: '\x03' },
+      { label: '^D', seq: '\x04' },
+      { label: '^E', seq: '\x05' },
+      { label: '^F', seq: '\x06' },
+      { label: '^K', seq: '\x0b' },
+      { label: '^L', seq: '\x0c' },
+      { label: '^N', seq: '\x0e' },
+      { label: '^P', seq: '\x10' },
+      { label: '^R', seq: '\x12' },
+      { label: '^U', seq: '\x15' },
+      { label: '^W', seq: '\x17' },
+      { label: '^Z', seq: '\x1a' },
+      { label: '^\\', seq: '\x1c' },
+    ];
+
+    const extraKeysEl = document.getElementById('extra-keys');
+
+    function makeKeyBtn(label, seq, cls) {
+      const btn = document.createElement('button');
+      btn.className = cls || 'key-btn';
+      btn.textContent = label;
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        wsSend(seq);
+        inputField.focus();
+      });
+      return btn;
+    }
+
+    let toggleBtn;
+    quickKeysDef.forEach((k) => {
+      if (k.toggle) {
+        toggleBtn = document.createElement('button');
+        toggleBtn.className = 'key-btn btn-toggle';
+        toggleBtn.textContent = k.label;
+        toggleBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          extraKeysEl.classList.toggle('open');
+          toggleBtn.classList.toggle('active');
+          updateLayout();
+        });
+        quickKeysEl.appendChild(toggleBtn);
+      } else {
+        quickKeysEl.appendChild(makeKeyBtn(k.label, k.seq));
+      }
+    });
+
+    extraKeysDef.forEach((k) => {
+      if (k.section) {
+        const sep = document.createElement('div');
+        sep.style.cssText = 'width:100%;font-size:10px;color:#888;padding:2px 4px;';
+        sep.textContent = k.section;
+        extraKeysEl.appendChild(sep);
+      } else {
+        extraKeysEl.appendChild(makeKeyBtn(k.label, k.seq));
+      }
+    });
+
+    setTimeout(updateLayout, 100);
+  </script>
+</body>
+</html>
