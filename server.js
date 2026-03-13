@@ -3,22 +3,127 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const path = require('path');
+const url = require('url');
 
-let port = 16000;
-const portIdx = process.argv.indexOf('--port');
-if (portIdx !== -1 && process.argv[portIdx + 1]) {
-  port = parseInt(process.argv[portIdx + 1], 10);
+// --- CLI options ---
+function getArg(flags) {
+  for (const flag of flags) {
+    const idx = process.argv.indexOf(flag);
+    if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
+  }
+  return null;
+}
+const hasFlag = (flags) => flags.some(f => process.argv.includes(f));
+
+const port = parseInt(getArg(['--port']) || '16000', 10);
+const useAuth = hasFlag(['--auth']);
+const startCwd = getArg(['-w', '--cwd']) || process.env.HOME;
+
+// --- Auth setup (only with --auth) ---
+let db, JWT_SECRET, verifyToken;
+
+if (useAuth) {
+  const crypto = require('crypto');
+  const bcrypt = require('bcryptjs');
+  const jwt = require('jsonwebtoken');
+  const Database = require('better-sqlite3');
+
+  db = new Database(path.join(__dirname, 'foxtty.db'));
+  db.pragma('journal_mode = WAL');
+  db.exec(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL
+  )`);
+
+  JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  const JWT_EXPIRES = '1d';
+
+  verifyToken = (token) => {
+    try { return jwt.verify(token, JWT_SECRET); } catch (e) { return null; }
+  };
+
+  // Expose auth setup for route handlers
+  global._auth = { db, jwt, bcrypt, JWT_SECRET, JWT_EXPIRES };
 }
 
+// --- Express ---
 const app = express();
+app.use(express.json());
+
+// Tell client whether auth is enabled
+app.get('/api/config', (req, res) => {
+  res.json({ auth: useAuth });
+});
+
+if (useAuth) {
+  const { db, jwt, bcrypt, JWT_SECRET, JWT_EXPIRES } = global._auth;
+
+  app.get('/api/status', (req, res) => {
+    const count = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+    res.json({ hasUsers: count > 0 });
+  });
+
+  app.post('/api/register', (req, res) => {
+    const count = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+    if (count > 0) {
+      return res.status(403).json({ error: 'Registration closed. Users already exist.' });
+    }
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required.' });
+    }
+    if (password.length < 4) {
+      return res.status(400).json({ error: 'Password must be at least 4 characters.' });
+    }
+    const hash = bcrypt.hashSync(password, 10);
+    try {
+      db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash);
+    } catch (e) {
+      return res.status(409).json({ error: 'Username already exists.' });
+    }
+    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.json({ token });
+  });
+
+  app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required.' });
+    }
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    res.json({ token });
+  });
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
+
+// WebSocket upgrade
+server.on('upgrade', (req, socket, head) => {
+  if (useAuth) {
+    const parsed = url.parse(req.url, true);
+    const token = parsed.query.token;
+    if (!verifyToken(token)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit('connection', ws, req);
+  });
+});
 
 // --- Multi-tab session management ---
 const MAX_SCROLLBACK = 100000;
-const sessions = new Map(); // id -> { pty, alive, scrollback }
+const sessions = new Map();
 let nextId = 1;
 
 function createSession() {
@@ -28,7 +133,7 @@ function createSession() {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
-    cwd: process.env.HOME,
+    cwd: startCwd,
     env: { ...process.env, PS1: '$ ' },
   });
 
@@ -40,7 +145,6 @@ function createSession() {
     if (session.scrollback.length > MAX_SCROLLBACK) {
       session.scrollback = session.scrollback.slice(-MAX_SCROLLBACK);
     }
-    // Broadcast to clients subscribed to this session
     for (const client of wss.clients) {
       if (client.readyState === 1 && client._tabId === id) {
         try { client.send(JSON.stringify({ type: 'output', data })); } catch (e) {}
@@ -57,7 +161,6 @@ function createSession() {
         try { client.send(JSON.stringify({ type: 'output', data: msg })); } catch (e) {}
       }
     }
-    // Notify all clients that this tab died
     for (const client of wss.clients) {
       if (client.readyState === 1) {
         try { client.send(JSON.stringify({ type: 'tab-exited', id })); } catch (e) {}
@@ -68,7 +171,6 @@ function createSession() {
   return session;
 }
 
-// Create initial tab
 createSession();
 
 function getTabList() {
@@ -77,14 +179,10 @@ function getTabList() {
 
 wss.on('connection', (ws) => {
   ws._tabId = null;
-
-  // Send tab list
   ws.send(JSON.stringify({ type: 'tab-list', tabs: getTabList() }));
 
   ws.on('message', (raw) => {
     const str = raw.toString('utf8');
-
-    // Drop binary noise
     if (str.includes('\x00')) return;
 
     const trimmed = str.trim();
@@ -93,7 +191,6 @@ wss.on('connection', (ws) => {
       try { cmd = JSON.parse(trimmed); } catch (e) { return; }
 
       if (cmd.type === 'switch') {
-        // Switch to a tab
         const session = sessions.get(cmd.id);
         if (session) {
           ws._tabId = cmd.id;
@@ -106,7 +203,6 @@ wss.on('connection', (ws) => {
       if (cmd.type === 'new-tab') {
         const session = createSession();
         ws._tabId = session.id;
-        // Notify all clients of updated tab list
         const list = JSON.stringify({ type: 'tab-list', tabs: getTabList() });
         for (const client of wss.clients) {
           if (client.readyState === 1) {
@@ -122,10 +218,7 @@ wss.on('connection', (ws) => {
         if (session) {
           if (session.alive) session.pty.kill();
           sessions.delete(cmd.id);
-          // If client was on this tab, switch away
-          if (ws._tabId === cmd.id) {
-            ws._tabId = null;
-          }
+          if (ws._tabId === cmd.id) ws._tabId = null;
           const list = JSON.stringify({ type: 'tab-list', tabs: getTabList() });
           for (const client of wss.clients) {
             if (client.readyState === 1) {
@@ -138,32 +231,24 @@ wss.on('connection', (ws) => {
 
       if (cmd.type === 'resize') {
         const session = sessions.get(ws._tabId);
-        if (session && session.alive) {
-          session.pty.resize(cmd.cols, cmd.rows);
-        }
+        if (session && session.alive) session.pty.resize(cmd.cols, cmd.rows);
         return;
       }
 
       if (cmd.type === 'input') {
         const session = sessions.get(ws._tabId);
-        if (session && session.alive) {
-          session.pty.write(cmd.data);
-        }
+        if (session && session.alive) session.pty.write(cmd.data);
         return;
       }
 
-      // Unknown JSON, ignore
       return;
     }
 
-    // Plain text input (from term.onData for PC keyboard)
     const session = sessions.get(ws._tabId);
-    if (session && session.alive) {
-      session.pty.write(str);
-    }
+    if (session && session.alive) session.pty.write(str);
   });
 });
 
 server.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}${useAuth ? ' (auth enabled)' : ''}`);
 });

@@ -15,7 +15,8 @@
 ```
 foxtrot/
 ├── package.json        # 의존성 (express, ws, node-pty)
-├── server.js           # Express + WebSocket + node-pty 서버 (멀티탭)
+├── server.js           # Express + WebSocket + node-pty 서버 (멀티탭, 인증)
+├── foxtty.db           # SQLite DB (자동 생성, .gitignore)
 ├── plan.md             # 이 파일
 ├── README.md           # 사용법 및 라이선스 (MIT)
 └── public/
@@ -93,18 +94,37 @@ foxtrot/
   - `{ type: "tab-exited", id }` — 탭의 shell 종료 알림
 - null 바이트 포함 메시지는 무조건 드롭 (프록시/터널 바이너리 노이즈 대응)
 
-### 8. 프롬프트
+### 8. 인증 시스템
+- 접속 시 **로그인 화면** 표시 (ID / Password)
+- **처음 접속 시** (DB에 유저 없음): "Create Account" 모드로 계정 생성
+- **이후 접속**: "Login" 모드로 로그인
+- **JWT 토큰**: 로그인 성공 시 발급, 1일 유효, localStorage에 저장
+- **자동 로그인**: 유효한 토큰이 있으면 로그인 화면 건너뜀
+- **Remember ID/Password** 체크박스: 체크 시 ID/Password를 localStorage에 저장하여 자동 입력
+- **WebSocket 인증**: 연결 시 query param으로 JWT 전달, 유효하지 않으면 401 거부
+- **비밀번호 저장**: bcrypt 해시로 SQLite에 저장 (`foxtty.db`)
+- **"USE AT YOUR OWN RISK"**: 로그인 후 터미널 상단에 빨간색 경고 배너 표시
+
+### 9. 프롬프트
 - `PS1='$ '`로 간결한 프롬프트 설정 (`bash-3.2$` 대신 `$ `)
 
 ## 서버 옵션
 
-- 기본 포트: `16000`
-- `--port <number>` 옵션으로 변경 가능
+| 옵션 | 설명 | 기본값 |
+|------|------|--------|
+| `--port <number>` | 서버 포트 | `16000` |
+| `--auth` | 인증 활성화 (ID/Password, JWT, SQLite) | 비활성 |
+| `-w, --cwd <path>` | 셸 시작 디렉토리 | `$HOME` |
+
+- `--auth` 없이 실행하면 인증 없이 바로 터미널 화면 표시
+- `--auth`로 실행하면 로그인 화면 + 경고 배너 + 로그아웃 버튼 표시
 
 ## 실행 방법
 
 ```bash
 npm install
-node server.js              # http://localhost:16000
-node server.js --port 8080  # http://localhost:8080
+node server.js                          # 인증 없이 바로 터미널
+node server.js --auth                   # 인증 활성화
+node server.js --port 8080 -w /tmp      # 포트 변경 + 시작 디렉토리 지정
+node server.js --auth -w ~/projects     # 인증 + 시작 디렉토리
 ```
