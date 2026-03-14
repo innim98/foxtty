@@ -239,6 +239,11 @@
       border-top: 1px solid #444;
     }
     .tab-new:active { background: #333; }
+    #terminal-container { touch-action: pan-y; }
+    .xterm-viewport {
+      -webkit-overflow-scrolling: touch !important;
+      overscroll-behavior: contain;
+    }
   </style>
 </head>
 <body>
@@ -258,6 +263,8 @@
     <div id="auth-error"></div>
   </div>
 </div>
+
+<iframe name="hidden-auth-frame" style="display:none"></iframe>
 
 <!-- Terminal app -->
 <div id="app">
@@ -307,15 +314,18 @@
 
   async function tryTokenLogin() {
     if (!authToken) return false;
-    // Test token by trying WebSocket
-    return new Promise((resolve) => {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const testWs = new WebSocket(`${proto}://${location.host}?token=${encodeURIComponent(authToken)}`);
-      testWs.onopen = () => { testWs.close(); resolve(true); };
-      testWs.onerror = () => resolve(false);
-      testWs.onclose = (e) => { if (e.code === 1006) resolve(false); };
-      setTimeout(() => { try { testWs.close(); } catch(e) {} resolve(false); }, 3000);
-    });
+    try {
+      const res = await fetch('/api/verify', {
+        headers: { 'Authorization': 'Bearer ' + authToken },
+      });
+      if (res.ok) return true;
+      localStorage.removeItem('foxtty_token');
+      authToken = null;
+      return false;
+    } catch (e) {
+      // Network error — token might still be valid, try anyway
+      return true;
+    }
   }
 
   async function doAuth() {
@@ -337,6 +347,13 @@
 
       authToken = data.token;
       localStorage.setItem('foxtty_token', authToken);
+
+      // Trigger browser's "Save password?" by submitting to hidden iframe
+      if (authRemember.checked) {
+        authForm.action = endpoint;
+        authForm.target = 'hidden-auth-frame';
+        authForm.submit();
+      }
 
       startApp();
     } catch (e) {
@@ -403,6 +420,8 @@
       cursorBlink: true,
       fontSize: 14,
       theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+      smoothScrollDuration: 80,
+      scrollSensitivity: 2,
     });
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
@@ -414,20 +433,56 @@
     let tabs = [];
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = authToken
-      ? `${proto}://${location.host}?token=${encodeURIComponent(authToken)}`
-      : `${proto}://${location.host}`;
-    const ws = new WebSocket(wsUrl);
+    let ws = null;
+    let reconnectTimer = null;
+    let reconnectDelay = 1000;
 
-    ws.onopen = () => {};
+    function connect() {
+      const wsUrl = authToken
+        ? `${proto}://${location.host}?token=${encodeURIComponent(authToken)}`
+        : `${proto}://${location.host}`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        reconnectDelay = 1000;
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      };
+
+      ws.onmessage = handleMsg;
+
+      ws.onclose = (e) => {
+        // 4001 = auth rejected by server (invalid/expired token)
+        if (e.code === 4001) {
+          term.write('\r\n[Session expired — please login again]\r\n');
+          localStorage.removeItem('foxtty_token');
+          setTimeout(() => location.reload(), 1500);
+          return;
+        }
+        term.write('\r\n[Connection lost — reconnecting...]\r\n');
+        scheduleReconnect();
+      };
+
+      ws.onerror = () => {};
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+        connect();
+      }, reconnectDelay);
+    }
 
     function handleMsg(e) {
       let msg;
       try { msg = JSON.parse(e.data); } catch (err) { return; }
 
       if (msg.type === 'output') {
+        const buf = term.buffer.active;
+        const atBottom = buf.viewportY >= buf.baseY;
         term.write(msg.data);
-        term.scrollToBottom();
+        if (atBottom) term.scrollToBottom();
       } else if (msg.type === 'scrollback') {
         // Ignore stale scrollback from a previous switch
         if (pendingTabId && pendingTabId !== currentTabId) return;
@@ -439,8 +494,10 @@
       } else if (msg.type === 'tab-list') {
         tabs = msg.tabs;
         renderTabMenu();
-        // Auto-connect
-        if (!currentTabId && tabs.length > 0) {
+        // Auto-connect to previous tab or first tab
+        if (currentTabId && tabs.find(t => t.id === currentTabId)) {
+          switchTab(currentTabId);
+        } else if (tabs.length > 0) {
           switchTab(tabs[0].id);
         }
       } else if (msg.type === 'switched') {
@@ -451,34 +508,28 @@
       }
     }
 
-    ws.onmessage = handleMsg;
-
-    ws.onclose = () => {
-      term.write('\r\n[Connection closed]\r\n');
-      // Token might have expired
-      localStorage.removeItem('foxtty_token');
-    };
+    connect();
 
     term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN && currentTabId) {
+      if (ws && ws.readyState === WebSocket.OPEN && currentTabId) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
 
     function wsSend(data) {
-      if (ws.readyState === WebSocket.OPEN && currentTabId) {
+      if (ws && ws.readyState === WebSocket.OPEN && currentTabId) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     }
 
     function sendResize() {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
     }
 
     function switchTab(id) {
-      if (currentTabId === id) { closeTabMenu(); return; }
+      if (currentTabId === id && !pendingTabId) { closeTabMenu(); return; }
       pendingTabId = id;
       currentTabId = id;
       ws.send(JSON.stringify({ type: 'switch', id }));
@@ -521,6 +572,8 @@
       fitAddon.fit();
       sendResize();
       term.scrollToBottom();
+      setTimeout(() => term.scrollToBottom(), 50);
+      setTimeout(() => term.scrollToBottom(), 150);
     }
 
     if (window.visualViewport) {
@@ -529,12 +582,56 @@
     }
     window.addEventListener('resize', updateLayout);
 
+    // --- Touch momentum scrolling ---
+    (function addTouchMomentum() {
+      const el = term.element;
+      if (!el) return;
+      let lastY = 0, lastTime = 0, velocity = 0, raf = null;
+
+      el.addEventListener('touchstart', (e) => {
+        if (raf) { cancelAnimationFrame(raf); raf = null; }
+        if (e.touches.length === 1) {
+          lastY = e.touches[0].clientY;
+          lastTime = Date.now();
+          velocity = 0;
+        }
+      }, { passive: true });
+
+      el.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 1) return;
+        const now = Date.now();
+        const y = e.touches[0].clientY;
+        const dt = now - lastTime;
+        if (dt > 0) velocity = (lastY - y) / dt;
+        lastY = y;
+        lastTime = now;
+      }, { passive: true });
+
+      el.addEventListener('touchend', () => {
+        const friction = 0.95;
+        const minV = 0.05;
+        const rows = el.querySelector('.xterm-rows');
+        const rowH = rows?.firstChild?.getBoundingClientRect().height || 17;
+        let acc = 0;
+
+        function step() {
+          velocity *= friction;
+          if (Math.abs(velocity) < minV) { raf = null; return; }
+          acc += velocity * 16;
+          const lines = Math.trunc(acc / rowH);
+          if (lines !== 0) { term.scrollLines(lines); acc -= lines * rowH; }
+          raf = requestAnimationFrame(step);
+        }
+        if (Math.abs(velocity) > minV) raf = requestAnimationFrame(step);
+      }, { passive: true });
+    })();
+
     // --- Input buffer ---
     const inputField = document.getElementById('input-field');
 
     function sendText() {
       const text = inputField.value;
-      if (text) wsSend(text);
+      if (text) wsSend(text + '\n');
       inputField.value = '';
       inputField.focus();
     }
@@ -696,6 +793,18 @@
         quickKeysEl.appendChild(makeKeyBtn(k.label, k.seq));
       }
     });
+
+    // Scroll-to-bottom button (in quick keys)
+    const bottomBtn = document.createElement('button');
+    bottomBtn.className = 'key-btn';
+    bottomBtn.style.background = '#007acc';
+    bottomBtn.style.color = '#fff';
+    bottomBtn.textContent = '\u21e3';
+    bottomBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      term.scrollToBottom();
+    });
+    quickKeysEl.appendChild(bottomBtn);
 
     extraKeysDef.forEach((k) => {
       if (k.section) {

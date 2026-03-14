@@ -89,6 +89,19 @@ if (useAuth && !authMissingSecret) {
     res.json({ token });
   });
 
+  app.get('/api/verify', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ valid: false });
+    }
+    const token = authHeader.slice(7);
+    if (verifyToken(token)) {
+      res.json({ valid: true });
+    } else {
+      res.status(401).json({ valid: false });
+    }
+  });
+
   app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -103,7 +116,13 @@ if (useAuth && !authMissingSecret) {
   });
 }
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.set('Cache-Control', 'no-store');
+  },
+}));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
@@ -114,8 +133,10 @@ server.on('upgrade', (req, socket, head) => {
     const parsed = url.parse(req.url, true);
     const token = parsed.query.token;
     if (!verifyToken(token)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
+      // Complete the upgrade, then close with 4001 so client knows auth failed
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.close(4001, 'Unauthorized');
+      });
       return;
     }
   }
