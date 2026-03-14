@@ -2,3 +2,4 @@ node_modules/
 foxtty.db
 foxtty.db-wal
 foxtty.db-shm
+certs/

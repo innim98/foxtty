@@ -9,7 +9,8 @@
 
 ## UI 요구사항
 - Send 버튼 + Enter 버튼 분리
-- Send/키보드리턴 시 텍스트 + 개행문자(`\n`) 함께 전송
+- Send/키보드리턴 시 텍스트 전송 후 `\r` 별도 전송 (50ms 딜레이, CLI 호환성)
+- 빈 입력 필드에서 Enter → `\r`만 전송
 - 특수키 2열 구조: Quick keys(항상) + 확장 패널(토글)
 - Quick keys: 탭 드롭다운, 1, 2, 3, ESC, TAB, ^C, Keys, ⇣(맨아래스크롤, 파란색)
 - ^C 표기 (C-c 아님)
@@ -42,6 +43,11 @@
 ## 서버
 - 정적 파일 캐시 비활성화 (Cache-Control: no-store)
 - null 바이트 메시지 필터링
+
+## SSL
+- `--ssl` 옵션으로 HTTPS 활성화
+- `--ssl-cert`, `--ssl-key`로 커스텀 인증서 경로 지정 (기본: `certs/`)
+- 자체서명 인증서 생성: `openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/key.pem -out certs/cert.pem -days 365 -subj "/CN=<host>" -addext "subjectAltName=IP:<host>"`
 
 ## 모바일 안정성 요구사항 (iPhone Safari)
 

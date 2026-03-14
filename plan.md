@@ -15,8 +15,9 @@
 ```
 foxtrot/
 ├── package.json        # 의존성 (express, ws, node-pty)
-├── server.js           # Express + WebSocket + node-pty 서버 (멀티탭, 인증)
+├── server.js           # Express + WebSocket + node-pty 서버 (멀티탭, 인증, SSL)
 ├── foxtty.db           # SQLite DB (자동 생성, .gitignore)
+├── certs/              # SSL 인증서 (cert.pem, key.pem)
 ├── plan.md             # 이 파일
 ├── README.md           # 사용법 및 라이선스 (MIT)
 └── public/
@@ -33,9 +34,10 @@ foxtrot/
 ### 1. 입력 버퍼 (Korean IME 안정화)
 - 화면 하단에 텍스트 입력 필드 + **Send** 버튼 + **Enter** 버튼
 - 텍스트 입력 필드: 한글 IME 조합이 안정적으로 동작하는 일반 `<input>` 태그
-- **Send 버튼**: 입력 필드의 텍스트를 터미널에 전송 (개행 없음)
+- **Send 버튼**: 입력 필드의 텍스트를 터미널에 전송 후 50ms 딜레이로 `\r` 별도 전송 (CLI 호환성)
 - **Enter 버튼**: 터미널에 `\r` (Enter) 전송
-- 입력 필드에서 Enter 키 → 텍스트만 전송 (개행 없음), `isComposing` 체크로 조합 중 전송 방지
+- 빈 입력 필드에서 Enter/Send → `\r`만 전송 (빈 Enter 지원)
+- 입력 필드에서 Enter 키 → `sendText()` 호출, `isComposing` 체크로 조합 중 전송 방지
 - placeholder 없음 (깔끔한 UI)
 
 ### 2. 특수 키 입력 (2열 구조)
@@ -115,10 +117,14 @@ foxtrot/
 |------|------|--------|
 | `--port <number>` | 서버 포트 | `16000` |
 | `--auth` | 인증 활성화 (ID/Password, JWT, SQLite) | 비활성 |
+| `--ssl` | HTTPS 활성화 | 비활성 |
+| `--ssl-cert <path>` | SSL 인증서 경로 | `certs/cert.pem` |
+| `--ssl-key <path>` | SSL 키 경로 | `certs/key.pem` |
 | `-w, --cwd <path>` | 셸 시작 디렉토리 | `$HOME` |
 
 - `--auth` 없이 실행하면 인증 없이 바로 터미널 화면 표시
 - `--auth`로 실행하면 로그인 화면 + 경고 배너 + 로그아웃 버튼 표시
+- `--ssl`로 실행하면 HTTPS + WSS로 동작 (기본 `certs/` 디렉토리의 인증서 사용)
 
 ## 실행 방법
 
@@ -128,4 +134,6 @@ node server.js                          # 인증 없이 바로 터미널
 node server.js --auth                   # 인증 활성화
 node server.js --port 8080 -w /tmp      # 포트 변경 + 시작 디렉토리 지정
 node server.js --auth -w ~/projects     # 인증 + 시작 디렉토리
+node server.js --ssl                    # HTTPS (certs/ 디렉토리 인증서)
+node server.js --ssl --ssl-cert /path/cert.pem --ssl-key /path/key.pem  # 커스텀 인증서
 ```
