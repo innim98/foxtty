@@ -631,7 +631,12 @@
 
     function sendText() {
       const text = inputField.value;
-      if (text) wsSend(text + '\n');
+      if (text) {
+        wsSend(text);
+        setTimeout(() => wsSend('\r'), 50);
+      } else {
+        wsSend('\r');
+      }
       inputField.value = '';
       inputField.focus();
     }
