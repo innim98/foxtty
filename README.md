@@ -1,11 +1,16 @@
 # Foxtrot
 
-Web terminal with a Korean input buffer. Designed to work around unstable Korean IME behavior in mobile browsers (especially iPhone Safari) when interacting directly with xterm.js.
+![Foxtrot](foxtty.png)
+
+Web terminal built on [@xterm/xterm](https://xtermjs.org/) with a Korean input buffer. Designed to work around unstable Korean IME behavior in mobile browsers (especially iPhone Safari) when interacting directly with @xterm/xterm.
 
 ## Features
 
+- **@xterm/xterm terminal** — Full terminal emulation powered by [@xterm/xterm](https://xtermjs.org/)
 - **Korean input buffer** — Stable Hangul IME composition via a standard `<input>` field
-- **Persistent session** — Shell stays alive across browser reconnects
+- **Multi-tab sessions** — Multiple independent shell sessions with tab switcher
+- **Persistent sessions** — Shells stay alive across browser reconnects
+- **Optional auth** — JWT + SQLite login with `--auth` flag
 - **Special keys toolbar** — ESC, TAB, Ctrl combos, arrow keys, function keys, and more
 - **Mobile optimized** — Virtual keyboard doesn't push content off screen
 - **Dark theme** — Terminal-native look and feel
@@ -22,13 +27,25 @@ Open `http://localhost:16000` in your browser.
 ### Options
 
 ```bash
-node server.js --port 8080   # Use a custom port
+node server.js --port 8080       # Custom port
+node server.js -w /tmp           # Custom start directory
 ```
+
+### Authentication
+
+To enable login, set `JWT_SECRET` and pass `--auth`:
+
+```bash
+JWT_SECRET=your_secret_here node server.js --auth
+JWT_SECRET=your_secret_here node server.js --auth -w ~/proj
+```
+
+`JWT_SECRET` is used to sign/verify JWT tokens (1-day expiry). If `--auth` is used without `JWT_SECRET`, the web UI will show a configuration error.
 
 ## Tech Stack
 
-- **Backend**: Node.js, Express, ws, node-pty
-- **Frontend**: xterm.js (CDN), single HTML file
+- **Backend**: Node.js, Express, ws, node-pty, better-sqlite3, jsonwebtoken, bcryptjs
+- **Frontend**: [@xterm/xterm](https://xtermjs.org/) (CDN), xterm-addon-fit, single HTML file
 
 ## License
 

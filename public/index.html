@@ -20,7 +20,6 @@
     #auth-screen {
       position: absolute;
       inset: 0;
-      display: flex;
       align-items: center;
       justify-content: center;
       background: #1e1e1e;
@@ -85,7 +84,8 @@
       min-height: 18px;
     }
     /* --- Terminal app (hidden until auth) --- */
-    #app { display: none; }
+    #auth-screen, #app { display: none; }
+    #auth-screen.show { display: flex; }
     #app.show { display: block; }
     #warning-bar {
       background: #3a3a3a;
@@ -244,7 +244,7 @@
 <body>
 
 <!-- Auth screen -->
-<div id="auth-screen">
+<div id="auth-screen" class="show">
   <div id="auth-box">
     <h2 id="auth-title">Login</h2>
     <form id="auth-form" method="post" action="#">
@@ -356,9 +356,18 @@
   async function init() {
     const cfg = await fetch('/api/config').then(r => r.json());
     if (!cfg.auth) {
-      // No auth required — go straight to terminal
       authToken = null;
       startApp();
+      return;
+    }
+    if (cfg.missingSecret) {
+      authTitle.textContent = 'Configuration Error';
+      authUser.style.display = 'none';
+      authPass.style.display = 'none';
+      authRemember.parentElement.style.display = 'none';
+      authBtn.style.display = 'none';
+      authError.style.color = '#f90';
+      authError.textContent = 'JWT_SECRET environment variable is not set. Start the server with: JWT_SECRET=your_secret node server.js --auth';
       return;
     }
     await checkStatus();
@@ -371,7 +380,7 @@
 
   // ===================== TERMINAL APP =====================
   function startApp() {
-    authScreen.style.display = 'none';
+    authScreen.classList.remove('show');
     appEl.classList.add('show');
 
     const warningBar = document.getElementById('warning-bar');
@@ -487,7 +496,6 @@
     // --- Layout ---
     const termContainer = document.getElementById('terminal-container');
     const bottomBar = document.getElementById('bottom-bar');
-    const warningBar = document.getElementById('warning-bar');
 
     function updateLayout() {
       const vv = window.visualViewport;

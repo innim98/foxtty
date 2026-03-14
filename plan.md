@@ -99,6 +99,7 @@ foxtrot/
 - **처음 접속 시** (DB에 유저 없음): "Create Account" 모드로 계정 생성
 - **이후 접속**: "Login" 모드로 로그인
 - **JWT 토큰**: 로그인 성공 시 발급, 1일 유효, localStorage에 저장
+- **JWT_SECRET**: 환경변수에서 읽음. 미설정 시 웹 UI에 설정 오류 표시
 - **자동 로그인**: 유효한 토큰이 있으면 로그인 화면 건너뜀
 - **Remember ID/Password** 체크박스: 체크 시 ID/Password를 localStorage에 저장하여 자동 입력
 - **WebSocket 인증**: 연결 시 query param으로 JWT 전달, 유효하지 않으면 401 거부

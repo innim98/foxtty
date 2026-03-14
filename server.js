@@ -22,41 +22,44 @@ const startCwd = getArg(['-w', '--cwd']) || process.env.HOME;
 // --- Auth setup (only with --auth) ---
 let db, JWT_SECRET, verifyToken;
 
+let authMissingSecret = false;
+
 if (useAuth) {
-  const crypto = require('crypto');
-  const bcrypt = require('bcryptjs');
-  const jwt = require('jsonwebtoken');
-  const Database = require('better-sqlite3');
+  JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    authMissingSecret = true;
+  } else {
+    const bcrypt = require('bcryptjs');
+    const jwt = require('jsonwebtoken');
+    const Database = require('better-sqlite3');
 
-  db = new Database(path.join(__dirname, 'foxtty.db'));
-  db.pragma('journal_mode = WAL');
-  db.exec(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL
-  )`);
+    db = new Database(path.join(__dirname, 'foxtty.db'));
+    db.pragma('journal_mode = WAL');
+    db.exec(`CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL
+    )`);
 
-  JWT_SECRET = crypto.randomBytes(32).toString('hex');
-  const JWT_EXPIRES = '1d';
+    const JWT_EXPIRES = '1d';
 
-  verifyToken = (token) => {
-    try { return jwt.verify(token, JWT_SECRET); } catch (e) { return null; }
-  };
+    verifyToken = (token) => {
+      try { return jwt.verify(token, JWT_SECRET); } catch (e) { return null; }
+    };
 
-  // Expose auth setup for route handlers
-  global._auth = { db, jwt, bcrypt, JWT_SECRET, JWT_EXPIRES };
+    global._auth = { db, jwt, bcrypt, JWT_SECRET, JWT_EXPIRES };
+  }
 }
 
 // --- Express ---
 const app = express();
 app.use(express.json());
 
-// Tell client whether auth is enabled
 app.get('/api/config', (req, res) => {
-  res.json({ auth: useAuth });
+  res.json({ auth: useAuth, missingSecret: authMissingSecret });
 });
 
-if (useAuth) {
+if (useAuth && !authMissingSecret) {
   const { db, jwt, bcrypt, JWT_SECRET, JWT_EXPIRES } = global._auth;
 
   app.get('/api/status', (req, res) => {
@@ -107,7 +110,7 @@ const wss = new WebSocketServer({ noServer: true });
 
 // WebSocket upgrade
 server.on('upgrade', (req, socket, head) => {
-  if (useAuth) {
+  if (useAuth && !authMissingSecret) {
     const parsed = url.parse(req.url, true);
     const token = parsed.query.token;
     if (!verifyToken(token)) {
