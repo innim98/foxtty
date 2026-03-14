@@ -264,6 +264,7 @@
   <div id="warning-bar">
     <span>USE AT YOUR OWN RISK — All logged-in users share the same terminal sessions.</span>
     <button id="logout-btn">Logout</button>
+    <button id="hide-warning-btn" style="flex-shrink:0;padding:3px 8px;font-size:12px;font-family:monospace;background:rgba(255,255,255,0.1);color:#aaa;border:1px solid #555;border-radius:3px;cursor:pointer;">&times;</button>
   </div>
   <div id="terminal-container"></div>
   <div id="bottom-bar">
@@ -393,6 +394,10 @@
         location.reload();
       });
     }
+    document.getElementById('hide-warning-btn').addEventListener('click', () => {
+      warningBar.style.display = 'none';
+      updateLayout();
+    });
 
     const term = new Terminal({
       cursorBlink: true,
