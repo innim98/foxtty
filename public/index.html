@@ -410,6 +410,7 @@
     fitAddon.fit();
 
     let currentTabId = null;
+    let pendingTabId = null;
     let tabs = [];
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -428,6 +429,9 @@
         term.write(msg.data);
         term.scrollToBottom();
       } else if (msg.type === 'scrollback') {
+        // Ignore stale scrollback from a previous switch
+        if (pendingTabId && pendingTabId !== currentTabId) return;
+        pendingTabId = null;
         term.reset();
         if (msg.data) term.write(msg.data);
         term.scrollToBottom();
@@ -474,9 +478,12 @@
     }
 
     function switchTab(id) {
+      if (currentTabId === id) { closeTabMenu(); return; }
+      pendingTabId = id;
       currentTabId = id;
       ws.send(JSON.stringify({ type: 'switch', id }));
       updateTabBtn();
+      renderTabMenu();
       closeTabMenu();
     }
 
@@ -554,6 +561,7 @@
       if (tabMenu.classList.contains('open')) {
         closeTabMenu();
       } else {
+        renderTabMenu();
         const rect = tabBtn.getBoundingClientRect();
         tabMenu.style.left = rect.left + 'px';
         tabMenu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
