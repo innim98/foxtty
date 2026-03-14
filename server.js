@@ -1,5 +1,7 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
+const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 const path = require('path');
@@ -17,6 +19,9 @@ const hasFlag = (flags) => flags.some(f => process.argv.includes(f));
 
 const port = parseInt(getArg(['--port']) || '16000', 10);
 const useAuth = hasFlag(['--auth']);
+const useSSL = hasFlag(['--ssl']);
+const sslCert = getArg(['--ssl-cert']);
+const sslKey = getArg(['--ssl-key']);
 const startCwd = getArg(['-w', '--cwd']) || process.env.HOME;
 
 // --- Auth setup (only with --auth) ---
@@ -124,7 +129,14 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
-const server = http.createServer(app);
+let server;
+if (useSSL) {
+  const certPath = sslCert || path.join(__dirname, 'certs', 'cert.pem');
+  const keyPath = sslKey || path.join(__dirname, 'certs', 'key.pem');
+  server = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, app);
+} else {
+  server = http.createServer(app);
+}
 const wss = new WebSocketServer({ noServer: true });
 
 // WebSocket upgrade
@@ -274,5 +286,6 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}${useAuth ? ' (auth enabled)' : ''}`);
+  const scheme = useSSL ? 'https' : 'http';
+  console.log(`Server running at ${scheme}://localhost:${port}${useAuth ? ' (auth enabled)' : ''}`);
 });
