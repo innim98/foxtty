@@ -239,6 +239,15 @@
       border-top: 1px solid #444;
     }
     .tab-new:active { background: #333; }
+    #bottom-bar.disconnected { opacity: 0.4; pointer-events: auto; }
+    #bottom-bar.disconnected * { pointer-events: none; }
+    #bottom-bar.disconnected::after {
+      content: 'Disconnected — tap to reconnect';
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.6); color: #ff6b6b; font-size: 14px;
+      font-weight: bold; z-index: 100; pointer-events: auto; cursor: pointer;
+    }
     #terminal-container { touch-action: pan-y; }
     .xterm-viewport {
       -webkit-overflow-scrolling: touch !important;
@@ -252,7 +261,8 @@
 <div id="auth-screen" class="show">
   <div id="auth-box">
     <h2 id="auth-title">Login</h2>
-    <form id="auth-form" method="post" action="#">
+    <div style="color:#666;font-size:11px;margin-top:-8px;margin-bottom:8px">v7</div>
+    <form id="auth-form" method="post" action="/api/login" autocomplete="on">
       <input type="text" id="auth-user" name="username" placeholder="ID" autocomplete="username">
       <input type="password" id="auth-pass" name="password" placeholder="Password" autocomplete="current-password">
       <div class="auth-row">
@@ -261,6 +271,9 @@
       <button type="submit" id="auth-btn">Login</button>
     </form>
     <div id="auth-error"></div>
+    <div id="auth-insecure" style="display:none;color:#ff6b6b;font-size:11px;margin-top:8px;text-align:center">
+      &#x26A0; Insecure connection (HTTP) — passwords may be intercepted
+    </div>
   </div>
 </div>
 
@@ -348,21 +361,32 @@
       authToken = data.token;
       localStorage.setItem('foxtty_token', authToken);
 
-      // Trigger browser's "Save password?" by submitting to hidden iframe
-      if (authRemember.checked) {
+      // Trigger browser's "Save password?" prompt (HTTPS only)
+      if (location.protocol === 'https:') {
+        const authForm = document.getElementById('auth-form');
         authForm.action = endpoint;
         authForm.target = 'hidden-auth-frame';
         authForm.submit();
+        setTimeout(() => startApp(), 300);
+      } else {
+        startApp();
       }
-
-      startApp();
     } catch (e) {
       authError.textContent = 'Connection error.';
     }
   }
 
-  const authForm = document.getElementById('auth-form');
-  authForm.addEventListener('submit', (e) => { e.preventDefault(); doAuth(); });
+  document.getElementById('auth-form').addEventListener('submit', (e) => { e.preventDefault(); doAuth(); });
+
+  // HTTP: disable Remember me + show warning
+  if (location.protocol === 'http:') {
+    authRemember.checked = false;
+    authRemember.disabled = true;
+    authRemember.parentElement.style.opacity = '0.4';
+    authUser.autocomplete = 'off';
+    authPass.autocomplete = 'off';
+    document.getElementById('auth-insecure').style.display = 'block';
+  }
 
   // Toggle autocomplete based on "Remember me"
   authRemember.addEventListener('change', () => {
@@ -446,6 +470,7 @@
       ws.onopen = () => {
         reconnectDelay = 1000;
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        setDisconnected(false);
       };
 
       ws.onmessage = handleMsg;
@@ -458,6 +483,7 @@
           setTimeout(() => location.reload(), 1500);
           return;
         }
+        setDisconnected(true);
         term.write('\r\n[Connection lost — reconnecting...]\r\n');
         scheduleReconnect();
       };
@@ -472,6 +498,24 @@
         reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
         connect();
       }, reconnectDelay);
+    }
+
+    function tryReconnectNow() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      reconnectDelay = 1000;
+      connect();
+    }
+
+    const bottomBar = document.getElementById('bottom-bar');
+    function setDisconnected(disconnected) {
+      if (disconnected) {
+        bottomBar.classList.add('disconnected');
+        inputField.disabled = true;
+      } else {
+        bottomBar.classList.remove('disconnected');
+        inputField.disabled = false;
+      }
     }
 
     function handleMsg(e) {
@@ -509,6 +553,14 @@
     }
 
     connect();
+
+    bottomBar.addEventListener('click', (e) => {
+      if (bottomBar.classList.contains('disconnected')) {
+        e.preventDefault();
+        e.stopPropagation();
+        tryReconnectNow();
+      }
+    }, true);
 
     term.onData((data) => {
       if (ws && ws.readyState === WebSocket.OPEN && currentTabId) {
@@ -558,7 +610,6 @@
 
     // --- Layout ---
     const termContainer = document.getElementById('terminal-container');
-    const bottomBar = document.getElementById('bottom-bar');
 
     function updateLayout() {
       const vv = window.visualViewport;
